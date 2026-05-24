@@ -1,0 +1,6 @@
+{
+  "name": "Cricket Performance Analyzer",
+  "description": "An interactive application for inputting, analyzing, comparing, and visualizing cricket player performance data with rich interactive charts for presentation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
