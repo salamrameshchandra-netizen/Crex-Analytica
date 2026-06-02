@@ -1,431 +1,515 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import { useState } from 'react';
-import { Player, MatchPerformance } from '../types';
+import { Player } from '../types';
 import { calculateCareerStats, formatDate, isMatchInSeason } from '../utils';
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine, AreaChart, Area
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, 
+  Tooltip, ResponsiveContainer, AreaChart, Area,
+  LineChart, Line, Legend
 } from 'recharts';
-import { 
-  TrendingUp, Activity, BarChart3, Database, Calendar, Trash2, 
-  Sparkles, Award, EyeOff, ShieldAlert 
-} from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 
 interface DashboardChartsProps {
   player: Player;
-  onDeleteMatch: (playerId: string, matchId: string) => void;
-  selectedSeason?: string;
+  selectedSeason: string;
+  onDeleteMatch: (matchId: string) => void;
 }
 
-type ChartTab = 'batting' | 'bowling' | 'trajectory' | 'ledger';
-
-export default function DashboardCharts({ player, onDeleteMatch, selectedSeason = 'All' }: DashboardChartsProps) {
-  const [activeTab, setActiveTab] = useState<ChartTab>('batting');
-  const [formatFilter, setFormatFilter] = useState<'All' | 'T20' | 'ODI' | 'Test'>('All');
-
-  // Filter matches by season first
+export default function DashboardCharts({ player, selectedSeason, onDeleteMatch }: DashboardChartsProps) {
+  // Filter matches by season
   const seasonFilteredMatches = player.matches.filter(
     m => isMatchInSeason(m.date, selectedSeason)
   );
 
   const stats = calculateCareerStats(seasonFilteredMatches);
 
-  // Filter match performances
-  const filteredMatches = seasonFilteredMatches
-    .filter(m => formatFilter === 'All' || m.format === formatFilter)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // chronological order
+  // Sorting matches chronologically for graphs progress
+  const chronologicalMatches = [...seasonFilteredMatches].sort(
+    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
 
-  // Process batting data for graphs
-  const battingData = filteredMatches
-    .filter(m => !m.didNotBat)
-    .map((m, index) => {
-      const strikeRate = m.ballsFaced > 0 ? Number(((m.runsScored / m.ballsFaced) * 100).toFixed(1)) : 0;
-      return {
-        matchNum: `Match ${index + 1}`,
-        opponent: m.opponent,
-        runs: m.runsScored,
-        balls: m.ballsFaced,
-        strikeRate: strikeRate,
-        isOut: m.isOut,
-        format: m.format,
-        date: formatDate(m.date),
-      };
+  const battingData = chronologicalMatches.map((m, idx) => ({
+    displayIdx: `Innings ${idx + 1}`,
+    runs: m.runsScored !== undefined ? m.runsScored : 0,
+    balls: m.ballsFaced !== undefined ? m.ballsFaced : 0,
+    opponent: m.opponent,
+    date: formatDate(m.date),
+  }));
+
+  const bowlingData = chronologicalMatches.map((m, idx) => ({
+    displayIdx: `Spell ${idx + 1}`,
+    wickets: m.wicketsTaken !== undefined ? m.wicketsTaken : 0,
+    conceded: m.runsConceded !== undefined ? m.runsConceded : 0,
+    opponent: m.opponent,
+    date: formatDate(m.date),
+  }));
+
+  const [activeTrend, setActiveTrend] = useState<'strikeRate' | 'economy'>(() => {
+    return player.role === 'Bowler' ? 'economy' : 'strikeRate';
+  });
+
+  const [matchToDeleteId, setMatchToDeleteId] = useState<string | null>(null);
+
+  // Filter matches with valid batting (runsScored !== undefined and ballsFaced > 0)
+  const battingMatches = chronologicalMatches.filter(
+    m => m.runsScored !== undefined && m.ballsFaced !== undefined && m.ballsFaced > 0
+  );
+
+  // Filter matches with valid bowling (oversBowled > 0 and runsConceded !== undefined)
+  const bowlingMatches = chronologicalMatches.filter(
+    m => m.oversBowled !== undefined && m.oversBowled > 0
+  );
+
+  const getBallsFromOvers = (o: number): number => {
+    const completed = Math.floor(o);
+    const fraction = Math.round((o - completed) * 10);
+    return completed * 6 + fraction;
+  };
+
+  const rollingBattingData = battingMatches.map((m, idx) => {
+    const startIdx = Math.max(0, idx - 4);
+    const subset = battingMatches.slice(startIdx, idx + 1);
+    
+    let sumRuns = 0;
+    let sumBalls = 0;
+    subset.forEach(s => {
+      sumRuns += s.runsScored || 0;
+      sumBalls += s.ballsFaced || 0;
     });
-
-  // Process bowling data for graphs
-  const bowlingData = filteredMatches
-    .filter(m => !m.didNotBowl)
-    .map((m, index) => {
-      // Economy rate: runs conceded per over (6 balls)
-      const balls = Math.floor(m.oversBowled) * 6 + Math.round((m.oversBowled % 1) * 10);
-      const economy = balls > 0 ? Number(((m.runsConceded / balls) * 6).toFixed(2)) : 0;
-      return {
-        matchNum: `Match ${index + 1}`,
-        opponent: m.opponent,
-        wickets: m.wicketsTaken,
-        conceded: m.runsConceded,
-        overs: m.oversBowled,
-        economy: economy,
-        format: m.format,
-        date: formatDate(m.date),
-      };
-    });
-
-  // Career progressive / trajectories
-  let cumulativeRuns = 0;
-  let cumulativeWickets = 0;
-  const trajectoryData = filteredMatches.map((m, index) => {
-    if (!m.didNotBat) cumulativeRuns += m.runsScored;
-    if (!m.didNotBowl) cumulativeWickets += m.wicketsTaken;
+    
+    const rollingSR = sumBalls > 0 ? parseFloat(((sumRuns / sumBalls) * 100).toFixed(2)) : 0;
+    const matchSR = m.ballsFaced && m.ballsFaced > 0 ? parseFloat(((m.runsScored || 0) / m.ballsFaced * 100).toFixed(2)) : 0;
+    
     return {
-      matchLabel: `#${index + 1} (${m.format})`,
+      matchIndex: idx + 1,
       opponent: m.opponent,
-      totalRuns: cumulativeRuns,
-      totalWickets: cumulativeWickets,
-      runsScored: m.didNotBat ? 0 : m.runsScored,
-      wicketsTaken: m.didNotBowl ? 0 : m.wicketsTaken,
       date: formatDate(m.date),
+      matchStrikeRate: matchSR,
+      rollingStrikeRate: rollingSR,
     };
   });
 
-  const customTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div className="bg-neutral-900 border border-neutral-800 text-white p-3 rounded-lg shadow-xl text-xs space-y-1">
-          <p className="font-semibold text-neutral-300">{data.opponent} ({data.format || 'Match'})</p>
-          <p className="text-neutral-400 font-mono">{data.date}</p>
-          {payload.map((item: any, i: number) => (
-            <p key={i} style={{ color: item.color }} className="font-medium flex justify-between gap-4">
-              <span>{item.name}:</span>
-              <span className="font-bold">{item.value}</span>
-            </p>
-          ))}
-          {data.isOut !== undefined && (
-            <p className="text-neutral-400 mt-1">
-              Dismissal Status: <span className={data.isOut ? "text-amber-400" : "text-emerald-400 font-bold"}>{data.isOut ? "Out" : "Not Out *"}</span>
-            </p>
-          )}
-        </div>
-      );
+  const rollingBowlingData = bowlingMatches.map((m, idx) => {
+    const startIdx = Math.max(0, idx - 4);
+    const subset = bowlingMatches.slice(startIdx, idx + 1);
+
+    let sumRunsConceded = 0;
+    let sumBallsBowled = 0;
+    subset.forEach(s => {
+      sumRunsConceded += s.runsConceded || 0;
+      sumBallsBowled += getBallsFromOvers(s.oversBowled || 0);
+    });
+
+    const trueOvers = sumBallsBowled / 6;
+    const rollingECON = trueOvers > 0 ? parseFloat((sumRunsConceded / trueOvers).toFixed(2)) : 0;
+    
+    const matchBalls = getBallsFromOvers(m.oversBowled || 0);
+    const matchTrueOvers = matchBalls / 6;
+    const matchECON = matchTrueOvers > 0 ? parseFloat(((m.runsConceded || 0) / matchTrueOvers).toFixed(2)) : 0;
+
+    return {
+      matchIndex: idx + 1,
+      opponent: m.opponent,
+      date: formatDate(m.date),
+      matchEconomy: matchECON,
+      rollingEconomy: rollingECON,
+    };
+  });
+
+  // Dynamic Momentum indicators
+  const getStrikeRateMomentum = () => {
+    if (rollingBattingData.length < 2) return null;
+    const latest = rollingBattingData[rollingBattingData.length - 1].rollingStrikeRate;
+    const prev = rollingBattingData[rollingBattingData.length - 2].rollingStrikeRate;
+    const diff = latest - prev;
+    if (diff > 0) {
+      return { text: `Upward (+${diff.toFixed(1)}%)`, color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' };
+    } else if (diff < 0) {
+      return { text: `Downward (${diff.toFixed(1)}%)`, color: 'text-rose-400 bg-rose-500/10 border-rose-500/25' };
     }
-    return null;
+    return { text: 'Stable', color: 'text-slate-400 bg-slate-500/10 border-slate-500/25' };
+  };
+
+  const getEconomyMomentum = () => {
+    if (rollingBowlingData.length < 2) return null;
+    const latest = rollingBowlingData[rollingBowlingData.length - 1].rollingEconomy;
+    const prev = rollingBowlingData[rollingBowlingData.length - 2].rollingEconomy;
+    const diff = latest - prev; // In economy, lower is better. So diff < 0 is improvement.
+    if (diff < 0) {
+      return { text: `Improving (${diff.toFixed(2)})`, color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' };
+    } else if (diff > 0) {
+      return { text: `Declining (+${diff.toFixed(2)})`, color: 'text-rose-400 bg-rose-500/10 border-rose-500/25' };
+    }
+    return { text: 'Stable', color: 'text-slate-400 bg-slate-500/10 border-slate-500/25' };
+  };
+
+  const srMomentum = getStrikeRateMomentum();
+  const econMomentum = getEconomyMomentum();
+
+  const handleDelete = (matchId: string) => {
+    setMatchToDeleteId(matchId);
   };
 
   return (
-    <div id="analytics-section" className="bg-white rounded-2xl border border-slate-200/95 shadow-md p-6 space-y-6">
-      
-      {/* Analytics Toolbar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-        <div>
-          <h2 className="text-lg font-black text-slate-900 flex items-center gap-1.5 font-sans tracking-tight uppercase">
-            <TrendingUp className="h-5 w-5 text-emerald-500" />
-            Performance Visualizations
-          </h2>
-          <p className="text-xs text-slate-500 font-mono">
-            Interactive presentation-ready graphs for {player.name}
+    <div className="space-y-6">
+      {/* Mini Cards stats indicator */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Batting Ave */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 font-mono text-5xl font-black">BAT</div>
+          <span className="text-[10px] text-slate-400 font-bold font-mono uppercase tracking-wider block">Batting Rank Avg</span>
+          <span className="text-2xl font-black text-white mt-1 block">{stats.battingAverage || '0.00'}</span>
+          <p className="text-[10px] text-slate-500 font-mono mt-1 leading-none">
+            Runs Scored: <strong className="text-emerald-400">{stats.totalRuns}</strong>
           </p>
         </div>
 
-        {/* Filters */}
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider font-mono">Format:</span>
-          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
-            {(['All', 'T20', 'ODI', 'Test'] as const).map((fmt) => (
-              <button
-                key={fmt}
-                onClick={() => setFormatFilter(fmt)}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                  formatFilter === fmt
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/50'
-                }`}
-              >
-                {fmt}
-              </button>
-            ))}
-          </div>
+        {/* Batting SR */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 font-mono text-5xl font-black">S/R</div>
+          <span className="text-[10px] text-slate-400 font-bold font-mono uppercase tracking-wider block">Batting Strike Rate</span>
+          <span className="text-2xl font-black text-white mt-1 block">{stats.battingStrikeRate ? `${stats.battingStrikeRate}%` : '0.00%'}</span>
+          <p className="text-[10px] text-slate-500 font-mono mt-1 leading-none">
+            Balls Faced: <strong className="text-emerald-400">{stats.totalBalls}</strong>
+          </p>
+        </div>
+
+        {/* Bowling Wickets */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-5 text-indigo-500 font-mono text-5xl font-black">WKTS</div>
+          <span className="text-[10px] text-slate-400 font-bold font-mono uppercase tracking-wider block">Career Wickets</span>
+          <span className="text-2xl font-black text-white mt-1 block">{stats.totalWickets}</span>
+          <p className="text-[10px] text-slate-500 font-mono mt-1 leading-none">
+            Best Bowl: <strong className="text-indigo-400">{stats.bestBowling ? `${stats.bestBowling.wickets}/${stats.bestBowling.runs}` : 'N/A'}</strong>
+          </p>
+        </div>
+
+        {/* Economy */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-5 text-indigo-500 font-mono text-5xl font-black">ECON</div>
+          <span className="text-[10px] text-slate-400 font-bold font-mono uppercase tracking-wider block">Bowling Economy</span>
+          <span className="text-2xl font-black text-white mt-1 block">{stats.economy || '0.00'}</span>
+          <p className="text-[10px] text-slate-500 font-mono mt-1 leading-none">
+            Overs Cast: <strong className="text-indigo-400">{stats.totalOvers}</strong>
+          </p>
         </div>
       </div>
 
-      {/* Tabs list navigation with High Density colors */}
-      <div className="flex items-center gap-1 border-b border-slate-150 overflow-x-auto pb-0.5">
-        <button
-          onClick={() => setActiveTab('batting')}
-          disabled={stats.inningsBatted === 0}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
-            stats.inningsBatted === 0 ? 'opacity-30 cursor-not-allowed border-transparent' :
-            activeTab === 'batting' ? 'border-emerald-500 text-emerald-600 bg-emerald-50/15' : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-350'
-          }`}
-        >
-          <Sparkles className="h-4 w-4 text-emerald-500" />
-          Batting Form
-        </button>
-        <button
-          onClick={() => setActiveTab('bowling')}
-          disabled={stats.inningsBowled === 0}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
-            stats.inningsBowled === 0 ? 'opacity-30 cursor-not-allowed border-transparent' :
-            activeTab === 'bowling' ? 'border-indigo-500 text-indigo-650 bg-indigo-50/15' : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-350'
-          }`}
-        >
-          <Award className="h-4 w-4 text-indigo-550" />
-          Bowling Form
-        </button>
-        <button
-          onClick={() => setActiveTab('trajectory')}
-          disabled={player.matches.length === 0}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
-            player.matches.length === 0 ? 'opacity-30 cursor-not-allowed border-transparent' :
-            activeTab === 'trajectory' ? 'border-slate-850 text-slate-900 bg-slate-50' : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-350'
-          }`}
-        >
-          <Activity className="h-4 w-4 text-slate-700" />
-          Career Growth Trend
-        </button>
-        <button
-          onClick={() => setActiveTab('ledger')}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all ml-auto cursor-pointer ${
-            activeTab === 'ledger' ? 'border-rose-500 text-rose-650 bg-rose-50/15' : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-350'
-          }`}
-        >
-          <Database className="h-4 w-4 text-rose-500" />
-          Preloaded Match Logs ({player.matches.length})
-        </button>
+      {/* Charts Section */}
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Runs over time */}
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xs flex flex-col justify-between">
+          <div>
+            <h4 className="font-extrabold text-xs text-slate-300 uppercase tracking-wider font-mono">Runs Scored Trend</h4>
+            <p className="text-[10px] text-slate-500 font-mono mb-4">Chronological runs and ball count over recent matches</p>
+          </div>
+          {battingData.length > 0 ? (
+            <div className="h-56 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={battingData}>
+                  <defs>
+                    <linearGradient id="runsGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="displayIdx" stroke="#475569" fontSize={9} />
+                  <YAxis stroke="#475569" fontSize={9} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: 12 }}
+                    labelStyle={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace' }}
+                    itemStyle={{ fontSize: 11 }}
+                  />
+                  <Area type="monotone" dataKey="runs" name="Runs" stroke="#10b981" fillOpacity={1} fill="url(#runsGrad)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-center py-16 text-xs text-slate-600 font-mono">No batting statistics matching filters</p>
+          )}
+        </div>
+
+        {/* Wickets over time */}
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xs flex flex-col justify-between">
+          <div>
+            <h4 className="font-extrabold text-xs text-slate-300 uppercase tracking-wider font-mono">Wickets Claimed trend</h4>
+            <p className="text-[10px] text-slate-500 font-mono mb-4">Spell wickets and conceding matches</p>
+          </div>
+          {bowlingData.length > 0 ? (
+            <div className="h-56 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={bowlingData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="displayIdx" stroke="#475569" fontSize={9} />
+                  <YAxis stroke="#475569" fontSize={9} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: 12 }}
+                    labelStyle={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace' }}
+                    itemStyle={{ fontSize: 11 }}
+                  />
+                  <Bar dataKey="wickets" name="Wickets" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-center py-16 text-xs text-slate-600 font-mono">No bowling statistics matching filters</p>
+          )}
+        </div>
       </div>
 
-      {/* Graphs canvas */}
-      <div className="min-h-[350px]">
-        {player.matches.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="p-4 bg-orange-50 border border-orange-150 rounded-full mb-3 text-orange-600">
-              <ShieldAlert className="h-8 w-8" />
+      {/* Recent Form Rolling 5-Match Trend Line Chart Component */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <h4 className="font-extrabold text-xs text-slate-300 uppercase tracking-widest font-mono">Form Velocity (Rolling 5-Match Trend)</h4>
+              
+              {activeTrend === 'strikeRate' && srMomentum && (
+                <span className={`text-[9px] px-2 py-0.5 rounded-md font-mono font-bold border ${srMomentum.color}`}>
+                  {srMomentum.text}
+                </span>
+              )}
+              {activeTrend === 'economy' && econMomentum && (
+                <span className={`text-[9px] px-2 py-0.5 rounded-md font-mono font-bold border ${econMomentum.color}`}>
+                  {econMomentum.text}
+                </span>
+              )}
             </div>
-            <h4 className="font-bold text-neutral-800 text-base">No Matches Logged</h4>
-            <p className="text-xs text-neutral-500 max-w-sm mt-1">
-              Add match statistics using the <strong>"Add Match Performance"</strong> button to generate graphs.
+            <p className="text-[10px] text-slate-500 font-mono">
+              Visualizes rolling five-match performance metrics to trace performance momentum and recent player trajectory
             </p>
           </div>
-        ) : activeTab === 'batting' && battingData.length > 0 ? (
-          <div className="space-y-8 animate-in fade-in duration-200">
-            {/* Chart 1: Batting runs timeline */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/30">
-                <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-4 flex items-center justify-between font-mono">
-                  <span>Match Runs Timeline</span>
-                  <span className="text-emerald-600 font-mono">Average: {stats.battingAverage} runs</span>
-                </h4>
-                <div className="h-72 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={battingData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ECEFF1" />
-                      <XAxis dataKey="opponent" tick={{ fontSize: 10, fill: '#64748B' }} />
-                      <YAxis tick={{ fontSize: 10, fill: '#64748B' }} />
-                      <Tooltip content={customTooltip} />
-                      <ReferenceLine y={stats.battingAverage} stroke="#10b981" strokeDasharray="5 5" label={{ value: 'Career Avg', position: 'insideRight', fill: '#10b981', fontSize: 10, fontWeight: 'bold' }} />
-                      <Line 
-                        type="monotone" 
-                        dataKey="runs" 
-                        name="Runs Scored" 
-                        stroke="#059669" 
-                        strokeWidth={3} 
-                        activeDot={{ r: 8 }} 
-                        dot={{ r: 5, fill: '#059669', strokeWidth: 2, stroke: '#fff' }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
 
-              {/* Chart 2: Batting strike rate bar chart */}
-              <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/30">
-                <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-4 flex items-center justify-between font-mono">
-                  <span>Innings Strike Rate (S/R)</span>
-                  <span className="text-emerald-600 font-mono">Overall S/R: {stats.battingStrikeRate}%</span>
-                </h4>
-                <div className="h-72 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={battingData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ECEFF1" />
-                      <XAxis dataKey="opponent" tick={{ fontSize: 10, fill: '#64748B' }} />
-                      <YAxis tick={{ fontSize: 10, fill: '#64748B' }} />
-                      <Tooltip content={customTooltip} />
-                      <ReferenceLine y={100} stroke="#475569" strokeDasharray="4 4" label={{ value: '100 S/R Mark', position: 'insideLeft', fill: '#475569', fontSize: 10 }} />
-                      <Bar dataKey="strikeRate" name="Strike Rate" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={45} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
+          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl self-start sm:self-auto border border-slate-800">
+            <button
+              onClick={() => setActiveTrend('strikeRate')}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black font-mono uppercase tracking-wider transition-all cursor-pointer ${
+                activeTrend === 'strikeRate'
+                  ? 'bg-emerald-500 text-slate-950 shadow-sm font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Strike Rate
+            </button>
+            <button
+              onClick={() => setActiveTrend('economy')}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black font-mono uppercase tracking-wider transition-all cursor-pointer ${
+                activeTrend === 'economy'
+                  ? 'bg-indigo-500 text-white shadow-sm font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Economy Rate
+            </button>
           </div>
-        ) : activeTab === 'bowling' && bowlingData.length > 0 ? (
-          <div className="space-y-8 animate-in fade-in duration-200">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Chart 1: Wickets & Runs conceded */}
-              <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/30">
-                <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-4 flex items-center justify-between font-mono">
-                  <span>Wickets Trapped vs Conceded</span>
-                  <span className="text-emerald-600 font-mono">Best: {stats.bestBowling ? `${stats.bestBowling.wickets}/${stats.bestBowling.runs}` : 'N/A'}</span>
-                </h4>
-                <div className="h-72 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={bowlingData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ECEFF1" />
-                      <XAxis dataKey="opponent" tick={{ fontSize: 10, fill: '#64748B' }} />
-                      <YAxis yAxisId="left" orientation="left" stroke="#10b981" tick={{ fontSize: 10 }} />
-                      <YAxis yAxisId="right" orientation="right" stroke="#6366f1" tick={{ fontSize: 10 }} />
-                      <Tooltip content={customTooltip} />
-                      <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: 10, fontFamily: 'monospace' }} />
-                      <Bar yAxisId="left" dataKey="wickets" name="Wickets Taken" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                      <Bar yAxisId="right" dataKey="conceded" name="Runs Conceded" fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
+        </div>
 
-              {/* Chart 2: Economy Rate timeline */}
-              <div className="border border-slate-105 rounded-xl p-4 bg-slate-50/30">
-                <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-4 flex items-center justify-between font-mono">
-                  <span>Economy Rate Match-wise</span>
-                  <span className="text-indigo-600 font-mono">Overall Economy: {stats.bowlingEconomy}</span>
-                </h4>
-                <div className="h-72 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={bowlingData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
-                      <defs>
-                        <linearGradient id="colorEcon" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25}/>
-                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ECEFF1" />
-                      <XAxis dataKey="opponent" tick={{ fontSize: 10, fill: '#64748B' }} />
-                      <YAxis tick={{ fontSize: 10, fill: '#64748B' }} />
-                      <Tooltip content={customTooltip} />
-                      <ReferenceLine y={stats.bowlingEconomy} stroke="#6366f1" strokeDasharray="4 4" label={{ value: 'Avg Eco', fill: '#6366f1', fontSize: 10, fontWeight: 'bold' }} />
-                      <Area type="monotone" dataKey="economy" name="Economy Rate" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorEcon)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
+        {activeTrend === 'strikeRate' ? (
+          rollingBattingData.length > 0 ? (
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={rollingBattingData} margin={{ left: -10, right: 10, top: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="matchIndex" tickFormatter={(v) => `Innings ${v}`} stroke="#475569" fontSize={9} />
+                  <YAxis stroke="#475569" fontSize={9} unit="%" />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: 12 }}
+                    labelFormatter={(label, items) => {
+                      const item = items[0]?.payload;
+                      return item ? `${item.date} vs ${item.opponent}` : `Innings ${label}`;
+                    }}
+                    labelStyle={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace' }}
+                    itemStyle={{ fontSize: 11 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 9, fontFamily: 'monospace', paddingTop: 10 }} />
+                  <Line 
+                    type="monotone" 
+                    dataKey="matchStrikeRate" 
+                    name="Innings Strike Rate" 
+                    stroke="#38bdf8" 
+                    strokeDasharray="4 4" 
+                    strokeWidth={1.5}
+                    dot={{ r: 3, fill: '#0f172a', strokeWidth: 1.5 }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="rollingStrikeRate" 
+                    name="5-Match Strike Rate Avg" 
+                    stroke="#10b981" 
+                    strokeWidth={3}
+                    dot={{ r: 4, strokeWidth: 2 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-          </div>
-        ) : activeTab === 'trajectory' ? (
-          <div className="space-y-8 animate-in fade-in duration-200">
-            {/* Cumulative growth trajectory */}
-            <div className="border border-slate-100 rounded-xl p-6 bg-slate-50/30">
-              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-5 font-mono">
-                Cumulative Performance Career Graph (Chronological)
-              </h4>
-              <div className="h-80 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={trajectoryData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
-                    <defs>
-                      <linearGradient id="colorRuns" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorWickets" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15}/>
-                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ECEFF1" />
-                    <XAxis dataKey="opponent" tick={{ fontSize: 10, fill: '#64748B' }} />
-                    <YAxis yAxisId="runs" orientation="left" stroke="#10b981" tick={{ fontSize: 10 }} />
-                    <YAxis yAxisId="wickets" orientation="right" stroke="#6366f1" tick={{ fontSize: 10 }} />
-                    <Tooltip content={customTooltip} />
-                    <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: 11, fontFamily: 'monospace' }} />
-                    <Area yAxisId="runs" type="monotone" dataKey="totalRuns" name="Cumulative Runs Scored" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorRuns)" />
-                    <Area yAxisId="wickets" type="monotone" dataKey="totalWickets" name="Cumulative Wickets Taken" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorWickets)" strokeDasharray="3 3" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-        ) : activeTab === 'ledger' ? (
-          <div className="border border-slate-200/90 rounded-xl overflow-hidden animate-in fade-in duration-200">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider font-bold border-b border-slate-200">
-                    <th className="py-3 px-4">Date</th>
-                    <th className="py-3 px-4">Opponent</th>
-                    <th className="py-3 px-4 text-center">Format</th>
-                    <th className="py-3 px-4 text-right font-mono">Runs (Balls)</th>
-                    <th className="py-3 px-4 text-center">Dismissal</th>
-                    <th className="py-3 px-4 text-center font-mono">Overs</th>
-                    <th className="py-3 px-4 text-right font-mono">Conceded</th>
-                    <th className="py-3 px-4 text-center font-mono">Wickets</th>
-                    <th className="py-3 px-4 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-705">
-                  {[...seasonFilteredMatches]
-                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) // latest first for logs
-                    .map((m) => (
-                      <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="py-2.5 px-4 font-medium whitespace-nowrap text-slate-500">{formatDate(m.date)}</td>
-                        <td className="py-2.5 px-4 font-extrabold text-slate-900">{m.opponent}</td>
-                        <td className="py-2.5 px-4 text-center">
-                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
-                            m.format === 'T20' ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' :
-                            m.format === 'ODI' ? 'bg-emerald-50 text-emerald-700 border border-emerald-150' : 'bg-slate-100 text-slate-800 border border-slate-200/60'
-                          }`}>
-                            {m.format}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-800">
-                          {m.didNotBat ? (
-                            <span className="text-slate-300 italic font-normal">DNB</span>
-                          ) : (
-                            `${m.runsScored} (${m.ballsFaced})`
-                          )}
-                        </td>
-                        <td className="py-2.5 px-4 text-center">
-                          {!m.didNotBat && (
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              m.isOut ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-150'
-                            }`}>
-                              {m.isOut ? 'Out' : 'Not Out'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-4 text-center font-mono font-medium text-slate-600">
-                          {m.didNotBowl ? <span className="text-slate-300 italic font-normal">DNB</span> : m.oversBowled}
-                        </td>
-                        <td className="py-2.5 px-4 text-right font-mono font-medium text-slate-600">
-                          {m.didNotBowl ? <span className="text-slate-300 italic font-normal">DNB</span> : m.runsConceded}
-                        </td>
-                        <td className="py-2.5 px-4 text-center font-black text-emerald-750 font-mono">
-                          {m.didNotBowl ? <span className="text-slate-300 font-normal italic">DNB</span> : m.wicketsTaken}
-                        </td>
-                        <td className="py-2.5 px-4 text-center">
-                          <button
-                            onClick={() => onDeleteMatch(player.id, m.id)}
-                            className="p-1 text-slate-400 hover:text-red-500 rounded hover:bg-slate-100 transition-all cursor-pointer"
-                            title="Delete match data"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          ) : (
+            <p className="text-center py-16 text-xs text-slate-500 font-mono bg-slate-950/20 rounded-2xl border border-dashed border-slate-800">
+              Insufficient innings recorded matching the filters to plot the 5-match striking rate.
+            </p>
+          )
         ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-center text-neutral-500">
-            <EyeOff className="h-8 w-8 text-neutral-400 mb-2" />
-            <p className="text-sm">No data available for the selected format filter ({formatFilter}).</p>
-          </div>
+          rollingBowlingData.length > 0 ? (
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={rollingBowlingData} margin={{ left: -10, right: 10, top: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="matchIndex" tickFormatter={(v) => `Spell ${v}`} stroke="#475569" fontSize={9} />
+                  <YAxis stroke="#475569" fontSize={9} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: 12 }}
+                    labelFormatter={(label, items) => {
+                      const item = items[0]?.payload;
+                      return item ? `${item.date} vs ${item.opponent}` : `Spell ${label}`;
+                    }}
+                    labelStyle={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace' }}
+                    itemStyle={{ fontSize: 11 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 9, fontFamily: 'monospace', paddingTop: 10 }} />
+                  <Line 
+                    type="monotone" 
+                    dataKey="matchEconomy" 
+                    name="Match Economy" 
+                    stroke="#f43f5e" 
+                    strokeDasharray="4 4" 
+                    strokeWidth={1.5}
+                    dot={{ r: 3, fill: '#0f172a', strokeWidth: 1.5 }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="rollingEconomy" 
+                    name="5-Match Economy Avg (Lower is Better)" 
+                    stroke="#6366f1" 
+                    strokeWidth={3}
+                    dot={{ r: 4, strokeWidth: 2 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-center py-16 text-xs text-slate-500 font-mono bg-slate-950/20 rounded-2xl border border-dashed border-slate-800">
+              Insufficient overs bowled matching the filters to plot the 5-match economy average.
+            </p>
+          )
         )}
       </div>
+
+      {/* Match Ledger Records Table List */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xs">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h4 className="font-extrabold text-xs text-slate-300 uppercase tracking-wider font-mono">Match Performance History</h4>
+            <p className="text-[10px] text-slate-500 font-mono">Detailed breakdown of games played in this season filter</p>
+          </div>
+          <span className="text-[9px] text-slate-500 font-mono font-bold bg-slate-950 px-2 py-1 rounded-md">
+            {seasonFilteredMatches.length} RECORDS
+          </span>
+        </div>
+
+        {seasonFilteredMatches.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-800 text-[10px] font-bold text-slate-400 font-mono uppercase tracking-wider">
+                  <th className="py-2.5 px-3">Date</th>
+                  <th className="py-2.5 px-3">Opponent</th>
+                  <th className="py-2.5 px-3">Batting (R/B)</th>
+                  <th className="py-2.5 px-3">Bowling (W/O/R)</th>
+                  <th className="py-2.5 px-3">Fielding (C/S)</th>
+                  <th className="py-2.5 px-3 text-right">Delete</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-850">
+                {seasonFilteredMatches.map((m) => {
+                  const runs = m.runsScored !== undefined ? m.runsScored : '-';
+                  const balls = m.ballsFaced !== undefined ? m.ballsFaced : '-';
+                  const outStr = m.runsScored !== undefined ? (m.isOut ? 'out' : 'n.o.') : '';
+
+                  const wickets = m.wicketsTaken !== undefined ? m.wicketsTaken : '-';
+                  const overs = m.oversBowled !== undefined ? m.oversBowled : '-';
+                  const cleanConceded = m.runsConceded !== undefined ? m.runsConceded : '-';
+
+                  return (
+                    <tr key={m.id} className="hover:bg-slate-950/20 transition-colors">
+                      <td className="py-2.5 px-3 font-mono text-slate-400">{formatDate(m.date)}</td>
+                      <td className="py-2.5 px-3 font-semibold text-slate-100">{m.opponent}</td>
+                      <td className="py-2.5 px-3 font-medium text-slate-300">
+                        {runs !== '-' ? (
+                          <span>{runs} Runs ({balls}b) <span className="text-[10px] text-slate-500 lowercase">({outStr})</span></span>
+                        ) : (
+                          <span className="text-slate-600">-</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 font-medium text-slate-300">
+                        {wickets !== '-' ? (
+                          <span>{wickets} Wkts / {overs} ov ({cleanConceded}r)</span>
+                        ) : (
+                          <span className="text-slate-600">-</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-400">
+                        {m.catches !== undefined || m.stumpings !== undefined ? (
+                          <span>C: {m.catches || 0} • S: {m.stumpings || 0}</span>
+                        ) : (
+                          <span className="text-slate-600">0</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          onClick={() => handleDelete(m.id)}
+                          className="p-1 px-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/15 rounded-md text-[10px] font-bold font-mono uppercase transition-colors cursor-pointer"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-center py-10 text-xs text-slate-600 font-mono bg-slate-950/10 rounded-2xl border border-dashed border-slate-800">
+            No recording parameters defined. Add a performance match entry card above.
+          </p>
+        )}
+      </div>
+
+      {/* Safe Match Deletion Modal */}
+      {matchToDeleteId && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] animate-fade-in text-left">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-xl">
+            <div className="h-10 w-10 bg-red-500/10 text-red-500 rounded-xl flex items-center justify-center">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black font-mono uppercase text-slate-200">Delete Match Entry</h3>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                Are you sure you want to delete this match record? All career stats, rolling trends, and historical metrics will re-aggregate immediately.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setMatchToDeleteId(null)}
+                className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700/60 rounded-xl text-xs font-bold leading-none cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onDeleteMatch(matchToDeleteId);
+                  setMatchToDeleteId(null);
+                }}
+                className="flex-1 py-1.5 bg-red-500 hover:bg-red-400 text-slate-950 font-black uppercase tracking-wider rounded-xl text-xs leading-none cursor-pointer transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

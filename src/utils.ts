@@ -1,116 +1,116 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import { MatchPerformance, CareerStats } from './types';
 
-/**
- * Convert overs representation (e.g., 3.4 representing 3 overs and 4 balls)
- * to total balls bowled.
- */
-export function oversToBalls(overs: number): number {
-  const completedOvers = Math.floor(overs);
-  const remainingBalls = Math.round((overs - completedOvers) * 10);
-  // Cap remaining balls at 5, just in case (though should be 0-5)
-  const actualRemaining = Math.min(remainingBalls, 5);
-  return completedOvers * 6 + actualRemaining;
-}
-
-/**
- * Convert total balls to overs representation for display (e.g., 22 balls -> 3.4 overs)
- */
-export function ballsToOvers(balls: number): number {
-  const completedOvers = Math.floor(balls / 6);
-  const remainingBalls = balls % 6;
-  return completedOvers + remainingBalls / 10;
-}
-
 export function calculateCareerStats(matches: MatchPerformance[]): CareerStats {
-  const battingMatches = matches.filter(m => !m.didNotBat);
-  const bowlingMatches = matches.filter(m => !m.didNotBowl);
+  const matchesCount = matches.length;
+  let totalRuns = 0;
+  let totalBalls = 0;
+  let highestScore = 0;
+  let outs = 0;
+  let fifties = 0;
+  let hundreds = 0;
 
-  // Batting
-  const totalRuns = battingMatches.reduce((sum, m) => sum + m.runsScored, 0);
-  const totalBalls = battingMatches.reduce((sum, m) => sum + m.ballsFaced, 0);
-  const inningsBatted = battingMatches.length;
-  const notOuts = battingMatches.filter(m => !m.isOut).length;
-  const outs = inningsBatted - notOuts;
-  
-  const battingAverage = outs > 0 ? Number((totalRuns / outs).toFixed(2)) : (inningsBatted > 0 ? totalRuns : 0);
-  const battingStrikeRate = totalBalls > 0 ? Number(((totalRuns / totalBalls) * 100).toFixed(2)) : 0;
-  const highestScore = battingMatches.length > 0 ? Math.max(...battingMatches.map(m => m.runsScored)) : 0;
-  
-  const fifties = battingMatches.filter(m => m.runsScored >= 50 && m.runsScored < 100).length;
-  const hundreds = battingMatches.filter(m => m.runsScored >= 100).length;
-
-  // Bowling
-  const totalBallsBowled = bowlingMatches.reduce((sum, m) => sum + oversToBalls(m.oversBowled), 0);
-  const totalOvers = Number((totalBallsBowled / 6).toFixed(1)); // Expressed in fractional overs count
-  const totalRunsConceded = bowlingMatches.reduce((sum, m) => sum + m.runsConceded, 0);
-  const totalWickets = bowlingMatches.reduce((sum, m) => sum + m.wicketsTaken, 0);
-  const inningsBowled = bowlingMatches.length;
-
-  const bowlingAverage = totalWickets > 0 ? Number((totalRunsConceded / totalWickets).toFixed(2)) : 0;
-  const bowlingEconomy = totalBallsBowled > 0 ? Number(((totalRunsConceded / totalBallsBowled) * 6).toFixed(2)) : 0;
-  const bowlingStrikeRate = totalWickets > 0 ? Number((totalBallsBowled / totalWickets).toFixed(2)) : 0;
-
-  // Best Bowling Calculation
+  let totalWickets = 0;
+  let totalOvers = 0;
+  let totalRunsConceded = 0;
   let bestBowling: { wickets: number; runs: number } | null = null;
-  for (const m of bowlingMatches) {
-    if (!bestBowling) {
-      bestBowling = { wickets: m.wicketsTaken, runs: m.runsConceded };
-    } else {
-      if (m.wicketsTaken > bestBowling.wickets) {
-        bestBowling = { wickets: m.wicketsTaken, runs: m.runsConceded };
-      } else if (m.wicketsTaken === bestBowling.wickets && m.runsConceded < bestBowling.runs) {
-        bestBowling = { wickets: m.wicketsTaken, runs: m.runsConceded };
+
+  let catchesCount = 0;
+  let stumpingsCount = 0;
+
+  matches.forEach(m => {
+    // Batting stats
+    const runs = m.runsScored !== undefined ? m.runsScored : 0;
+    const balls = m.ballsFaced !== undefined ? m.ballsFaced : 0;
+    
+    if (m.runsScored !== undefined) {
+      totalRuns += runs;
+      if (runs > highestScore) highestScore = runs;
+      if (runs >= 50 && runs < 100) fifties++;
+      if (runs >= 100) hundreds++;
+    }
+    if (m.ballsFaced !== undefined) {
+      totalBalls += balls;
+    }
+    if (m.isOut) {
+      outs++;
+    }
+
+    // Bowling stats
+    const wickets = m.wicketsTaken !== undefined ? m.wicketsTaken : 0;
+    const overs = m.oversBowled !== undefined ? m.oversBowled : 0;
+    const runsConceded = m.runsConceded !== undefined ? m.runsConceded : 0;
+
+    if (m.wicketsTaken !== undefined || m.oversBowled !== undefined || m.runsConceded !== undefined) {
+      totalWickets += wickets;
+      totalOvers += overs;
+      totalRunsConceded += runsConceded;
+
+      if (m.wicketsTaken !== undefined && m.runsConceded !== undefined) {
+        if (!bestBowling || 
+            wickets > bestBowling.wickets || 
+            (wickets === bestBowling.wickets && runsConceded < bestBowling.runs)) {
+          bestBowling = { wickets, runs: runsConceded };
+        }
       }
     }
-  }
+
+    // Fielding stats
+    catchesCount += m.catches || 0;
+    stumpingsCount += m.stumpings || 0;
+  });
+
+  const notOuts = matchesCount - outs;
+
+  const battingAverage = outs > 0 ? parseFloat((totalRuns / outs).toFixed(2)) : totalRuns;
+  const battingStrikeRate = totalBalls > 0 ? parseFloat(((totalRuns / totalBalls) * 100).toFixed(2)) : 0;
+
+  // Convert fractional overs (e.g. 3.2 -> 3 overs and 2 balls) to total balls
+  const convertOversToBalls = (o: number): number => {
+    const completed = Math.floor(o);
+    const fraction = Math.round((o - completed) * 10);
+    return completed * 6 + fraction;
+  };
+  
+  const totalBallsBowled = convertOversToBalls(totalOvers);
+  const trueOvers = totalBallsBowled / 6;
+
+  const bowlingAverage = totalWickets > 0 ? parseFloat((totalRunsConceded / totalWickets).toFixed(2)) : 0;
+  const bowlingStrikeRate = totalWickets > 0 ? parseFloat((totalBallsBowled / totalWickets).toFixed(2)) : 0;
+  const economy = trueOvers > 0 ? parseFloat((totalRunsConceded / trueOvers).toFixed(2)) : 0;
 
   return {
-    totalMatches: matches.length,
+    matchesCount,
     totalRuns,
     totalBalls,
-    inningsBatted,
-    notOuts,
     battingAverage,
     battingStrikeRate,
     highestScore,
+    notOuts,
     fifties,
     hundreds,
-    inningsBowled,
-    totalOvers,
-    totalRunsConceded,
     totalWickets,
+    totalOvers: parseFloat(totalOvers.toFixed(1)),
+    totalRunsConceded,
     bowlingAverage,
-    bowlingEconomy,
     bowlingStrikeRate,
+    economy,
     bestBowling,
+    catchesCount,
+    stumpingsCount
   };
 }
 
-/**
- * Format best bowling (e.g., 5/24)
- */
-export function formatBestBowling(best: { wickets: number; runs: number } | null): string {
-  if (!best) return 'N/A';
-  return `${best.wickets}/${best.runs}`;
+export function formatBestBowling(bestBowling: { wickets: number; runs: number } | null): string {
+  if (!bestBowling) return 'N/A';
+  return `${bestBowling.wickets}/${bestBowling.runs}`;
 }
 
-/**
- * Format display for date (e.g. "May 24, 2026")
- */
 export function formatDate(dateString: string): string {
   if (!dateString) return '';
   const date = new Date(dateString);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/**
- * Get season representation from a date string (e.g. "2026-04-10" -> "2026-27")
- */
 export function getSeasonFromDate(dateStr: string): string {
   if (!dateStr || dateStr.length < 4) return '';
   const year = parseInt(dateStr.slice(0, 4), 10);
@@ -119,12 +119,8 @@ export function getSeasonFromDate(dateStr: string): string {
   return `${year}-${nextYearShort}`;
 }
 
-/**
- * Check if a match date falls under the selected season string
- */
 export function isMatchInSeason(matchDate: string, selectedSeason: string): boolean {
   if (selectedSeason === 'All') return true;
   const matchSeason = getSeasonFromDate(matchDate);
   return matchSeason === selectedSeason || matchDate.startsWith(selectedSeason);
 }
-
