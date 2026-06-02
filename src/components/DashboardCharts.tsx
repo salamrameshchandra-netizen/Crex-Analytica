@@ -418,7 +418,7 @@ export default function DashboardCharts({ player, selectedSeason, onDeleteMatch 
                   <th className="py-2.5 px-3">Batting (R/B)</th>
                   <th className="py-2.5 px-3">Bowling (W/O/R)</th>
                   <th className="py-2.5 px-3">Fielding (C/S)</th>
-                  <th className="py-2.5 px-3 text-right">Delete</th>
+                  <th className="py-2.5 px-3 text-right no-pdf-export">Delete</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-850">
@@ -456,7 +456,7 @@ export default function DashboardCharts({ player, selectedSeason, onDeleteMatch 
                           <span className="text-slate-600">0</span>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-right">
+                      <td className="py-2.5 px-3 text-right no-pdf-export">
                         <button
                           onClick={() => handleDelete(m.id)}
                           className="p-1 px-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/15 rounded-md text-[10px] font-bold font-mono uppercase transition-colors cursor-pointer"

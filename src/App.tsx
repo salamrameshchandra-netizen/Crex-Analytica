@@ -9,11 +9,12 @@ import MatchForm from './components/MatchForm';
 import PlayerComparison from './components/PlayerComparison';
 import PresentationMode from './components/PresentationMode';
 import DashboardCharts from './components/DashboardCharts';
+import ReportPDFExportModal from './components/ReportPDFExportModal';
 
 // Lucide icon assets
 import { 
   Plus, Trash2, Users, BarChart3, ChevronDown, 
-  Calendar, Play, Sparkles
+  Calendar, Play, Sparkles, FileDown
 } from 'lucide-react';
 
 export default function App() {
@@ -41,6 +42,7 @@ export default function App() {
   const [showMatchForm, setShowMatchForm] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
   const [showPresentation, setShowPresentation] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   // Safe UI confirmations State (bypassing native confirm/alert in sandboxed environments)
   const [playerToDeleteId, setPlayerToDeleteId] = useState<string | null>(null);
@@ -131,10 +133,19 @@ export default function App() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowComparison(true)}
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700/60 rounded-xl text-xs font-bold leading-none flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-755 text-slate-200 border border-slate-700/60 rounded-xl text-xs font-bold leading-none flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
             >
               <Users className="h-3.5 w-3.5" />
               <span>Benchmark Comp</span>
+            </button>
+            <button
+              onClick={() => setShowExportModal(true)}
+              disabled={!activePlayer}
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-755 text-slate-200 border border-slate-700/60 rounded-xl text-xs font-bold leading-none flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Download PDF Report"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              <span>Export PDF</span>
             </button>
             <button
               onClick={() => setShowPresentation(true)}
@@ -220,7 +231,7 @@ export default function App() {
         </section>
 
         {/* Right column: Main Athlete Performance Ledger & Visual Charts */}
-        <section className="col-span-1 md:col-span-8 lg:col-span-9 space-y-6">
+        <section id="athlete-report-content" className="col-span-1 md:col-span-8 lg:col-span-9 space-y-6">
           
           {/* Active Athlete profile banner panel */}
           {activePlayer && (
@@ -254,7 +265,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="shrink-0 flex items-center">
+              <div className="shrink-0 flex items-center no-pdf-export">
                 <button
                   onClick={() => setShowMatchForm(true)}
                   className="px-4 py-2 bg-emerald-500 text-slate-950 font-black hover:bg-emerald-400 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-emerald-500/10 transition-all cursor-pointer"
@@ -268,7 +279,7 @@ export default function App() {
 
           {/* Season Filter Bar with Dropdown Select + Manual Input Box */}
           {activePlayer && (
-            <div className="bg-slate-900 border border-slate-800/80 rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+            <div className="bg-slate-900 border border-slate-800/80 rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm no-pdf-export">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-slate-950/65 text-emerald-400 border border-slate-850 rounded-xl">
                   <Calendar className="h-4 w-4" />
@@ -376,6 +387,15 @@ export default function App() {
           player={activePlayer}
           selectedSeason={selectedSeason}
           onClose={() => setShowPresentation(false)}
+        />
+      )}
+
+      {/* 5. PDF report portfolio export modal */}
+      {showExportModal && activePlayer && (
+        <ReportPDFExportModal
+          player={activePlayer}
+          selectedSeason={selectedSeason}
+          onClose={() => setShowExportModal(false)}
         />
       )}
 
